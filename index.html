@@ -221,6 +221,7 @@
       .print-overlay { width: 56px; height: 56px; font-size: 1.65rem; }
     }
   </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body class="bg-grid-pattern min-h-screen">
 
@@ -606,6 +607,9 @@
                 </button>
                 <button type="button" id="btnARCam" onclick="toggleARCamera()" class="bg-cyan-600/15 border border-cyan-500/50 text-cyan-700 px-2.5 py-1 rounded-lg text-[11px] font-bold transition">
                   📷 Cámara AR
+                </button>
+                <button type="button" id="btnSphere3D" onclick="toggleSphereViewer()" class="bg-purple-600/15 border border-purple-500/50 text-purple-600 px-2.5 py-1 rounded-lg text-[11px] font-bold transition">
+                  🔮 Esfera 3D
                 </button>
               </div>
             </div>
@@ -1833,6 +1837,438 @@
     actualizarTotalPersonalizado();
     calcLona();
     calcNegShirt();
+  
+    
+    
+    
+    // === VISOR ESFERA HOLOGRÁFICA DE CRISTAL PURO (EDICIÓN EXHIBICIÓN) ===
+    let s3dScene, s3dCamera, s3dRenderer, s3dGlassSphere, s3dGarmentGroup, s3dFrontMesh, s3dBackMesh;
+    let s3dRingOuter, s3dRingInner, s3dConeBeam, s3dBaseRings, s3dParticles, s3dAnimId;
+    let s3dOpen = false, s3dDragging = false, s3dPrevX = 0, s3dPrevY = 0;
+    let s3dRotX = 0.08, s3dRotY = 0, s3dZoom = 4.35;
+
+    let s3dFrontCanvas = document.createElement("canvas");
+    s3dFrontCanvas.width = 1024; s3dFrontCanvas.height = 1024;
+    let s3dBackCanvas = document.createElement("canvas");
+    s3dBackCanvas.width = 1024; s3dBackCanvas.height = 1024;
+    let s3dFrontTex = null, s3dBackTex = null;
+
+    function drawGarmentSide(canvas, isBackSide) {
+      const ctx = canvas.getContext("2d");
+      const garmentColor = document.getElementById("garmentSvg")?.getAttribute("fill") || "#1e293b";
+      const currentPathD = document.getElementById("garmentShape")?.getAttribute("d") || "M55,30 L80,22 Q100,34 120,22 L145,30 L180,62 L160,86 L142,72 L142,175 L58,175 L58,72 L40,86 L20,62 Z";
+      const isUV = document.getElementById("mockupCanvasBox")?.classList.contains("uv-mode") || (typeof uvActive !== "undefined" && uvActive);
+
+      ctx.clearRect(0, 0, 1024, 1024);
+
+      // Aura de proyección holográfica
+      const backGlow = ctx.createRadialGradient(512, 512, 40, 512, 512, 440);
+      backGlow.addColorStop(0, isUV ? "rgba(232, 121, 249, 0.42)" : "rgba(56, 189, 248, 0.28)");
+      backGlow.addColorStop(1, "rgba(0, 0, 0, 0)");
+      ctx.fillStyle = backGlow;
+      ctx.fillRect(0, 0, 1024, 1024);
+
+      // Silueta de la prenda
+      ctx.save();
+      ctx.translate(112, 112);
+      ctx.scale(4, 4);
+      const p2d = new Path2D(currentPathD);
+      ctx.fillStyle = garmentColor;
+      ctx.shadowColor = isUV ? "#e879f9" : "#38bdf8";
+      ctx.shadowBlur = 18;
+      ctx.fill(p2d);
+
+      // Contorno luminoso doble
+      ctx.lineWidth = 3.2;
+      ctx.strokeStyle = isUV ? "#f0abfc" : "#7dd3fc";
+      ctx.stroke(p2d);
+      ctx.restore();
+
+      // Líneas de escaneo cuántico
+      ctx.fillStyle = isUV ? "rgba(232, 121, 249, 0.08)" : "rgba(56, 189, 248, 0.07)";
+      for (let y = 190; y < 830; y += 12) {
+        ctx.fillRect(230, y, 564, 2.5);
+      }
+
+      // Etiqueta superior discreta (FRENTE / ESPALDA)
+      ctx.fillStyle = isUV ? "rgba(240, 171, 252, 0.7)" : "rgba(125, 211, 252, 0.65)";
+      ctx.font = "700 20px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText(isBackSide ? "VISTA POSTERIOR • 180°" : "VISTA FRONTAL • 0°", 512, 165);
+
+      // Estampado central (Pequeño en pecho o grande en espalda)
+      const zonePecho = document.getElementById("zonePecho");
+      const imgEl = zonePecho ? zonePecho.querySelector("img") : null;
+      const artRadius = isBackSide ? 148 : 112;
+      const artY = isBackSide ? 495 : 460;
+
+      if (imgEl && imgEl.complete && imgEl.naturalWidth > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(512, artY, artRadius, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(imgEl, 512 - artRadius, artY - artRadius, artRadius * 2, artRadius * 2);
+        ctx.restore();
+
+        ctx.strokeStyle = isUV ? "#e879f9" : "#38bdf8";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(512, artY, artRadius + 4, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        const symbol = (zonePecho && zonePecho.innerText.trim()) || "🌀";
+        ctx.font = isBackSide ? "215px sans-serif" : "160px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        if (isUV) { ctx.shadowColor = "#e879f9"; ctx.shadowBlur = 38; }
+        ctx.fillText(symbol, 512, artY + 8);
+        ctx.shadowBlur = 0;
+      }
+
+      // Estampados en mangas si están activos en el probador
+      const mangaIzq = document.getElementById("zoneMangaIzq");
+      const mangaDer = document.getElementById("zoneMangaDer");
+      if (mangaIzq && !mangaIzq.classList.contains("hidden")) {
+        const sIcon = mangaIzq.innerText.trim() || "❄️";
+        ctx.font = "68px sans-serif";
+        ctx.fillText(sIcon, isBackSide ? 755 : 270, 420);
+      }
+      if (mangaDer && !mangaDer.classList.contains("hidden")) {
+        const sIcon = mangaDer.innerText.trim() || "❄️";
+        ctx.font = "68px sans-serif";
+        ctx.fillText(sIcon, isBackSide ? 270 : 755, 420);
+      }
+    }
+
+    function buildInnerGarmentTexture() {
+      drawGarmentSide(s3dFrontCanvas, false);
+      drawGarmentSide(s3dBackCanvas, true);
+      if (s3dFrontTex) s3dFrontTex.needsUpdate = true;
+      if (s3dBackTex) s3dBackTex.needsUpdate = true;
+    }
+
+    function initThreeSphere() {
+      const stage = document.getElementById("sphere3dStage");
+      if (!stage || s3dRenderer) return;
+
+      s3dScene = new THREE.Scene();
+      s3dCamera = new THREE.PerspectiveCamera(45, stage.clientWidth / stage.clientHeight, 0.1, 100);
+      s3dCamera.position.z = s3dZoom;
+
+      s3dRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+      s3dRenderer.setSize(stage.clientWidth, stage.clientHeight);
+      s3dRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      stage.appendChild(s3dRenderer.domElement);
+
+      // Iluminación de estudio + destellos especulares en cristal
+      const ambient = new THREE.AmbientLight(0xffffff, 0.9);
+      const topSpot = new THREE.PointLight(0xffffff, 2.6, 25);
+      topSpot.position.set(3.2, 4.8, 4.8);
+      const cyanRim = new THREE.PointLight(0x38bdf8, 2.0, 22);
+      cyanRim.position.set(-4.5, 2.2, 3.5);
+      const purpleRim = new THREE.PointLight(0xc084fc, 1.8, 22);
+      purpleRim.position.set(3.5, -4.2, 3.2);
+      s3dScene.add(ambient, topSpot, cyanRim, purpleRim);
+
+      // Grupo central con doble cara real (Frente 0° y Espalda 180°)
+      buildInnerGarmentTexture();
+      s3dFrontTex = new THREE.CanvasTexture(s3dFrontCanvas);
+      s3dBackTex = new THREE.CanvasTexture(s3dBackCanvas);
+
+      s3dGarmentGroup = new THREE.Group();
+      const planeGeo = new THREE.PlaneGeometry(2.18, 2.18);
+
+      const frontMat = new THREE.MeshBasicMaterial({ map: s3dFrontTex, transparent: true, side: THREE.FrontSide, depthWrite: false });
+      s3dFrontMesh = new THREE.Mesh(planeGeo, frontMat);
+      s3dFrontMesh.position.z = 0.015;
+
+      const backMat = new THREE.MeshBasicMaterial({ map: s3dBackTex, transparent: true, side: THREE.FrontSide, depthWrite: false });
+      s3dBackMesh = new THREE.Mesh(planeGeo, backMat);
+      s3dBackMesh.rotation.y = Math.PI;
+      s3dBackMesh.position.z = -0.015;
+
+      s3dGarmentGroup.add(s3dFrontMesh, s3dBackMesh);
+      s3dScene.add(s3dGarmentGroup);
+
+      // Haz de proyección cónico desde el pedestal inferior hacia la prenda
+      const coneGeo = new THREE.ConeGeometry(1.05, 1.35, 48, 1, true);
+      const coneMat = new THREE.MeshBasicMaterial({
+        color: 0x38bdf8,
+        transparent: true,
+        opacity: 0.08,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      s3dConeBeam = new THREE.Mesh(coneGeo, coneMat);
+      s3dConeBeam.position.y = -0.62;
+      s3dScene.add(s3dConeBeam);
+
+      // Pedestal energético concéntrico interno
+      s3dBaseRings = new THREE.Group();
+      [0.42, 0.72, 0.98].forEach((r, idx) => {
+        const rGeo = new THREE.RingGeometry(r, r + 0.035, 64);
+        const rMat = new THREE.MeshBasicMaterial({
+          color: 0x38bdf8,
+          transparent: true,
+          opacity: 0.45 - idx * 0.1,
+          side: THREE.DoubleSide
+        });
+        const m = new THREE.Mesh(rGeo, rMat);
+        m.rotation.x = -Math.PI / 2;
+        m.position.y = -1.24 + idx * 0.02;
+        s3dBaseRings.add(m);
+      });
+      s3dScene.add(s3dBaseRings);
+
+      // Cápsula exterior de Cristal Puro Transparente
+      const glassGeo = new THREE.SphereGeometry(1.66, 64, 64);
+      const glassMat = new THREE.MeshPhysicalMaterial({
+        color: 0xe0f2fe,
+        transparent: true,
+        opacity: 0.19,
+        roughness: 0.04,
+        metalness: 0.08,
+        reflectivity: 1.0,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.03,
+        side: THREE.FrontSide,
+        depthWrite: false
+      });
+      s3dGlassSphere = new THREE.Mesh(glassGeo, glassMat);
+      s3dScene.add(s3dGlassSphere);
+
+      // Borde Fresnel holográfico
+      const rimShaderMat = new THREE.ShaderMaterial({
+        uniforms: { glowColor: { value: new THREE.Color(0x38bdf8) } },
+        vertexShader: `
+          varying vec3 vNormal;
+          varying vec3 vViewPosition;
+          void main() {
+            vNormal = normalize(normalMatrix * normal);
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            vViewPosition = -mvPosition.xyz;
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 glowColor;
+          varying vec3 vNormal;
+          varying vec3 vViewPosition;
+          void main() {
+            vec3 viewDir = normalize(vViewPosition);
+            float fresnel = pow(1.0 - abs(dot(vNormal, viewDir)), 3.1);
+            gl_FragColor = vec4(glowColor, fresnel * 0.9);
+          }
+        `,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      const fresnelMesh = new THREE.Mesh(new THREE.SphereGeometry(1.67, 64, 64), rimShaderMat);
+      s3dGlassSphere.add(fresnelMesh);
+      s3dGlassSphere.userData.rimMat = rimShaderMat;
+
+      // Doble Anillo Giroscópico Orbital
+      const rOutGeo = new THREE.TorusGeometry(2.15, 0.014, 16, 128);
+      const rOutMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.5 });
+      s3dRingOuter = new THREE.Mesh(rOutGeo, rOutMat);
+      s3dRingOuter.rotation.x = 1.28;
+      s3dRingOuter.rotation.y = 0.24;
+
+      const rInGeo = new THREE.TorusGeometry(1.92, 0.01, 16, 128);
+      const rInMat = new THREE.MeshBasicMaterial({ color: 0xc084fc, transparent: true, opacity: 0.42 });
+      s3dRingInner = new THREE.Mesh(rInGeo, rInMat);
+      s3dRingInner.rotation.x = 1.15;
+      s3dRingInner.rotation.y = -0.35;
+
+      s3dScene.add(s3dRingOuter, s3dRingInner);
+
+      // Polvo estelar cuántico
+      const pGeo = new THREE.BufferGeometry();
+      const pCount = 280;
+      const pPos = new Float32Array(pCount * 3);
+      for (let i = 0; i < pCount * 3; i++) pPos[i] = (Math.random() - 0.5) * 14;
+      pGeo.setAttribute("position", new THREE.BufferAttribute(pPos, 3));
+      const pMat = new THREE.PointsMaterial({ color: 0x7dd3fc, size: 0.038, transparent: true, opacity: 0.8 });
+      s3dParticles = new THREE.Points(pGeo, pMat);
+      s3dScene.add(s3dParticles);
+
+      // Controles táctiles y ratón
+      const dom = s3dRenderer.domElement;
+      dom.addEventListener("mousedown", e => { s3dDragging = true; s3dPrevX = e.clientX; s3dPrevY = e.clientY; });
+      window.addEventListener("mouseup", () => { s3dDragging = false; });
+      window.addEventListener("mousemove", e => {
+        if (!s3dDragging || !s3dOpen) return;
+        s3dRotY += (e.clientX - s3dPrevX) * 0.01;
+        s3dRotX = Math.max(-0.9, Math.min(0.9, s3dRotX + (e.clientY - s3dPrevY) * 0.009));
+        s3dPrevX = e.clientX; s3dPrevY = e.clientY;
+      });
+      dom.addEventListener("touchstart", e => {
+        if (e.touches.length === 1) { s3dDragging = true; s3dPrevX = e.touches[0].clientX; s3dPrevY = e.touches[0].clientY; }
+      }, { passive: true });
+      dom.addEventListener("touchend", () => { s3dDragging = false; });
+      dom.addEventListener("touchmove", e => {
+        if (!s3dDragging || !s3dOpen || e.touches.length !== 1) return;
+        s3dRotY += (e.touches[0].clientX - s3dPrevX) * 0.012;
+        s3dRotX = Math.max(-0.9, Math.min(0.9, s3dRotX + (e.touches[0].clientY - s3dPrevY) * 0.01));
+        s3dPrevX = e.touches[0].clientX; s3dPrevY = e.touches[0].clientY;
+      }, { passive: true });
+      dom.addEventListener("wheel", e => {
+        if (!s3dOpen) return;
+        e.preventDefault();
+        s3dZoom = Math.max(2.7, Math.min(6.6, s3dZoom + e.deltaY * 0.003));
+        s3dCamera.position.z = s3dZoom;
+      }, { passive: false });
+
+      window.addEventListener("resize", () => {
+        if (!s3dOpen || !s3dRenderer) return;
+        s3dCamera.aspect = stage.clientWidth / stage.clientHeight;
+        s3dCamera.updateProjectionMatrix();
+        s3dRenderer.setSize(stage.clientWidth, stage.clientHeight);
+      });
+    }
+
+    function animateThreeSphere() {
+      if (!s3dOpen) return;
+      const t = Date.now() * 0.002;
+      if (!s3dDragging) s3dRotY += 0.0075;
+
+      // Levitación armónica y rotación 360° de la prenda interior
+      s3dGarmentGroup.rotation.y = s3dRotY;
+      s3dGarmentGroup.rotation.x = s3dRotX * 0.35;
+      s3dGarmentGroup.position.y = Math.sin(t) * 0.045;
+
+      // Pulso suave del haz holográfico
+      s3dConeBeam.material.opacity = 0.07 + Math.sin(t * 1.5) * 0.025;
+      s3dBaseRings.rotation.y += 0.008;
+
+      // Rotación giroscópica contrapuesta de los anillos
+      s3dRingOuter.rotation.z += 0.004;
+      s3dRingInner.rotation.z -= 0.006;
+      s3dGlassSphere.rotation.y = s3dRotY * 0.4;
+      s3dGlassSphere.rotation.x = s3dRotX;
+      s3dParticles.rotation.y -= 0.0012;
+
+      s3dRenderer.render(s3dScene, s3dCamera);
+      s3dAnimId = requestAnimationFrame(animateThreeSphere);
+    }
+
+    function toggleSphereViewer() {
+      const modal = document.getElementById("sphereFullscreenModal");
+      s3dOpen = !s3dOpen;
+      if (s3dOpen) {
+        modal.classList.remove("hidden");
+        modal.classList.add("flex");
+        initThreeSphere();
+        setTimeout(() => {
+          const stage = document.getElementById("sphere3dStage");
+          s3dCamera.aspect = stage.clientWidth / stage.clientHeight;
+          s3dCamera.updateProjectionMatrix();
+          s3dRenderer.setSize(stage.clientWidth, stage.clientHeight);
+          buildInnerGarmentTexture();
+          animateThreeSphere();
+        }, 40);
+      } else {
+        modal.classList.add("hidden");
+        modal.classList.remove("flex");
+        cancelAnimationFrame(s3dAnimId);
+      }
+      if (typeof playTone === "function") playTone("click");
+    }
+
+    function cambiarArticuloEsfera(tipo) {
+      if (typeof shapesSVG !== "undefined" && shapesSVG[tipo]) {
+        const shapeEl = document.getElementById("garmentShape");
+        if (shapeEl) shapeEl.setAttribute("d", shapesSVG[tipo]);
+      }
+      buildInnerGarmentTexture();
+      if (typeof playTone === "function") playTone("click");
+    }
+
+    function cambiarColorEsferaModal(hex) {
+      if (typeof cambiarColorPrenda === "function") cambiarColorPrenda(hex);
+      buildInnerGarmentTexture();
+    }
+
+    function toggleSphereUVModal() {
+      if (typeof toggleBlacklightUV === "function") toggleBlacklightUV();
+      buildInnerGarmentTexture();
+      const isUV = document.getElementById("mockupCanvasBox")?.classList.contains("uv-mode") || (typeof uvActive !== "undefined" && uvActive);
+      const hexColor = isUV ? 0xe879f9 : 0x38bdf8;
+      if (s3dRingOuter) s3dRingOuter.material.color.setHex(hexColor);
+      if (s3dConeBeam) s3dConeBeam.material.color.setHex(hexColor);
+      if (s3dBaseRings) s3dBaseRings.children.forEach(r => r.material.color.setHex(hexColor));
+      if (s3dGlassSphere?.userData?.rimMat) s3dGlassSphere.userData.rimMat.uniforms.glowColor.value.setHex(hexColor);
+    }
+
+    function capturarHologramaPNG() {
+      if (!s3dRenderer) return;
+      s3dRenderer.render(s3dScene, s3dCamera);
+      const link = document.createElement("a");
+      link.download = "plasma-tonalli-holograma-360.png";
+      link.href = s3dRenderer.domElement.toDataURL("image/png");
+      link.click();
+      if (typeof playTone === "function") playTone("chime");
+    }
+
   </script>
+
+  <!-- MODAL VISOR ESFERA 3D PANTALLA CASI COMPLETA -->
+  <div id="sphereFullscreenModal" class="fixed inset-0 z-[9999] hidden items-center justify-center bg-slate-950/92 backdrop-blur-xl p-2 md:p-5">
+    <div class="relative w-[95vw] h-[90vh] max-w-6xl rounded-3xl bg-[radial-gradient(ellipse_at_center,#0f172a_0%,#020617_70%,#000000_100%)] border border-cyan-400/35 shadow-[0_0_80px_rgba(56,189,248,0.22),inset_0_0_60px_rgba(168,85,247,0.12)] overflow-hidden flex flex-col">
+      
+      <!-- Barra superior del visor -->
+      <div class="flex flex-wrap items-center justify-between gap-2 px-4 md:px-6 py-3 border-b border-white/10 bg-slate-950/80 backdrop-blur-md z-20">
+        <div class="flex items-center gap-3">
+          <span class="relative flex h-3 w-3">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-3 w-3 bg-cyan-500"></span>
+          </span>
+          <div>
+            <h3 class="text-white font-extrabold text-xs md:text-sm tracking-widest uppercase">CÁMARA HOLOGRÁFICA 360° • PLASMA TONALLI</h3>
+            <p class="text-[10px] text-cyan-300/80 hidden sm:block">Proyección de Cristal Puro • Frente y Reverso en Tiempo Real</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="capturarHologramaPNG()" class="bg-cyan-500/20 hover:bg-cyan-500/35 border border-cyan-400/50 text-cyan-200 px-3 py-1.5 rounded-xl text-xs font-bold transition">
+            📸 Guardar Vista
+          </button>
+          <button type="button" onclick="toggleSphereUVModal()" id="btnModalUV" class="bg-purple-600/25 hover:bg-purple-600/45 border border-purple-400/50 text-purple-200 px-3 py-1.5 rounded-xl text-xs font-bold transition">
+            🔦 Luz Negra UV
+          </button>
+          <button type="button" onclick="toggleSphereViewer()" class="bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-lg">
+            ✕ Cerrar
+          </button>
+        </div>
+      </div>
+
+      <!-- Selector flotante superior de artículo dentro del holograma -->
+      <div class="absolute top-16 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/75 border border-white/10 backdrop-blur-md z-20 max-w-[92vw] overflow-x-auto">
+        <button type="button" onclick="cambiarArticuloEsfera('shirt')" class="px-2.5 py-1 rounded-full text-[11px] font-semibold text-slate-200 hover:bg-cyan-500/25 transition whitespace-nowrap">👕 Playera</button>
+        <button type="button" onclick="cambiarArticuloEsfera('hoodie')" class="px-2.5 py-1 rounded-full text-[11px] font-semibold text-slate-200 hover:bg-cyan-500/25 transition whitespace-nowrap">🧥 Sudadera</button>
+        <button type="button" onclick="cambiarArticuloEsfera('cap')" class="px-2.5 py-1 rounded-full text-[11px] font-semibold text-slate-200 hover:bg-cyan-500/25 transition whitespace-nowrap">🧢 Gorra</button>
+        <button type="button" onclick="cambiarArticuloEsfera('mug')" class="px-2.5 py-1 rounded-full text-[11px] font-semibold text-slate-200 hover:bg-cyan-500/25 transition whitespace-nowrap">☕ Taza</button>
+        <button type="button" onclick="cambiarArticuloEsfera('lamp')" class="px-2.5 py-1 rounded-full text-[11px] font-semibold text-slate-200 hover:bg-cyan-500/25 transition whitespace-nowrap">🏮 Lámpara</button>
+        <button type="button" onclick="cambiarArticuloEsfera('bottle')" class="px-2.5 py-1 rounded-full text-[11px] font-semibold text-slate-200 hover:bg-cyan-500/25 transition whitespace-nowrap">🍶 Termo</button>
+      </div>
+
+      <!-- Contenedor Canvas 3D -->
+      <div id="sphere3dStage" class="relative flex-1 w-full h-full cursor-grab active:cursor-grabbing"></div>
+
+      <!-- Controles inferiores flotantes (Colores y guía) -->
+      <div class="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-wrap items-center justify-center gap-3 px-5 py-2.5 rounded-2xl bg-slate-900/85 border border-cyan-400/25 backdrop-blur-md shadow-2xl z-20">
+        <span class="text-[11px] text-slate-300 font-semibold hidden sm:inline">Tono Base:</span>
+        <button onclick="cambiarColorEsferaModal('#1e293b')" class="w-6 h-6 rounded-full bg-slate-800 border-2 border-white shadow hover:scale-110 transition" title="Negro"></button>
+        <button onclick="cambiarColorEsferaModal('#f8fafc')" class="w-6 h-6 rounded-full bg-slate-100 border-2 border-slate-400 shadow hover:scale-110 transition" title="Blanco"></button>
+        <button onclick="cambiarColorEsferaModal('#0f172a')" class="w-6 h-6 rounded-full bg-slate-950 border-2 border-white shadow hover:scale-110 transition" title="Azul Marino"></button>
+        <button onclick="cambiarColorEsferaModal('#7f1d1d')" class="w-6 h-6 rounded-full bg-red-950 border-2 border-white shadow hover:scale-110 transition" title="Vino"></button>
+        <button onclick="cambiarColorEsferaModal('#065f46')" class="w-6 h-6 rounded-full bg-emerald-900 border-2 border-white shadow hover:scale-110 transition" title="Verde Bosque"></button>
+        <button onclick="cambiarColorEsferaModal('#4c1d95')" class="w-6 h-6 rounded-full bg-violet-900 border-2 border-white shadow hover:scale-110 transition" title="Púrpura Cósmico"></button>
+        <span class="text-[11px] text-cyan-300 font-semibold ml-1">🖱️ Gira 360° (Frente / Espalda) • Rueda Zoom</span>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>
