@@ -1,0 +1,1 @@
+Plasma Tonalli hasta ahora tiene  en proceso la creacion de su meta-verso, que es un conjunto de 11 mundos con temas diversos pero interesantes para mentes curiosas y que implican utilidad. Esta app es la parte de servicios de diseño y ventas en 2D.
